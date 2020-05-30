@@ -2,26 +2,15 @@ import sublime, sublime_plugin
 import os
 import subprocess
 import re
+import time
 
 import sys
 
 PLATFORM      = sublime.platform()
-METALANG      = 'metalang.exe'
+METALANG_PATH = 'C:\\Program Files (x86)\\MetaTrader 4 IC Markets\\metaeditor.exe'
 EXTENSION     = '.mq4'
-WINE          = 'wine'
-
-BASE_PATH     = os.path.abspath(os.path.dirname(__file__))
-METALANG_PATH = os.path.join(BASE_PATH, METALANG)
 
 def which(file):
-
-    manual_path = os.path.join("/usr/bin", file)
-    if os.path.exists(manual_path):
-        return manual_path
-
-    manual_path = os.path.join("/usr/local/bin", file)
-    if os.path.exists(manual_path):
-        return manual_path
 
     for dir in os.environ['PATH'].split(os.pathsep):
         path = os.path.join(dir, file)
@@ -41,9 +30,11 @@ class Mql4CompilerCommand(sublime_plugin.TextCommand):
             self.dirname   = os.path.realpath(os.path.dirname(view.file_name()))
             self.filename  = os.path.basename(view.file_name())
             self.extension = os.path.splitext(self.filename)[1]
+            self.compilelog= self.dirname+"\\"+os.path.splitext(self.filename)[0] + ".log"
+            if os.path.exists(self.compilelog):
+                os.remove(self.compilelog)
+                print("File log "+self.filename+" removed")
 
-        if PLATFORM != 'windows':
-            self.wine_path = which(WINE)
 
     def isError(self):
 
@@ -51,34 +42,29 @@ class Mql4CompilerCommand(sublime_plugin.TextCommand):
 
         if not os.path.exists(METALANG_PATH):
             print (METALANG_PATH) # Debug
-            print ("Mqlcompiler | error: metalang.exe not found")
+            print ("MQL Compiler | error: metaeditor.exe not found")
             iserror = True
-
-        if PLATFORM != 'windows':
-            if not self.wine_path :
-                print ("Mqlcompiler | error: wine is not installed")
-                iserror = True
 
         if self.view.file_name() is None :
             # check if console..
-            print ("Mqlcompiler | error: Buffer has to be saved first")
+            print ("MQL Compiler | error: Buffer has to be saved first")
             iserror = True
 
         else :
 
             if self.extension != EXTENSION:
-                print ("Mqlcompiler | error: wrong file extension: ({0})".format(self.extension))
+                print ("MQL Compiler | error: wrong file extension: ({0})".format(self.extension))
                 iserror = True
 
             if self.view.is_dirty():
-                print ("Mqlcompiler | error: Save File before compiling")
+                print ("MQL Compiler | error: Save File before compiling")
                 iserror = True
 
         return iserror
 
     def runMetalang(self):
 
-        command = [METALANG_PATH,self.filename]
+        command = [METALANG_PATH,"/compile:"+self.filename, "/log"]
 
         startupinfo = None
 
@@ -87,59 +73,12 @@ class Mql4CompilerCommand(sublime_plugin.TextCommand):
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-        # executing exe files with wine on mac / linux
-        if PLATFORM != 'windows':
-            command.insert(0,self.wine_path)
-
         # execution:
         proc = subprocess.Popen(command,
         cwd= self.dirname,
-        stdout=subprocess.PIPE,
+        stdout=None,
         shell=False,
         startupinfo=startupinfo)
-
-        return proc.stdout.read()
-
-    def formatOutput(self , stdout):
-
-        output = ""
-        log_lines = re.split('\n',stdout)
-        group_files = []
-
-        for l in log_lines :
-
-            line = l.strip()
-
-            if not line:
-                continue
-
-            line_arr = re.split(';',line)
-            line_len = len(line_arr)
-
-            if line_len < 5 :
-
-                if re.match(r"^Exp file",line):
-                    output+= "\n-----------------------\n"
-
-                output+= line + "\n"
-
-            if line_len == 5 :
-                fpath = line_arr[2].split("\\")[-1]
-
-                if fpath and not fpath in group_files:
-                    group_files.append(fpath)
-                    output += "\n-----------------------\n"
-                    output += "file: {0}".format(fpath)
-                    output += "\n-----------------------\n"
-
-                if line_arr[3]:
-                    output+= "line {0} | {1}".format(line_arr[3],line_arr[4])
-                else:
-                    output+= "{0}".format(line_arr[4])
-                output+= "\n"
-
-        return output
-
 
     def newLogWindow(self, output):
         window = self.view.window()
@@ -159,7 +98,14 @@ class Mql4CompilerCommand(sublime_plugin.TextCommand):
         if self.isError():
             return
 
-        stdout = self.runMetalang()
-        stdout = stdout.decode(encoding='UTF-8')
-        output = self.formatOutput(stdout)
-        self.newLogWindow(output)
+        self.runMetalang()
+
+        while not os.path.exists(self.compilelog):
+            time.sleep(1)
+
+        with open(self.compilelog, 'r', encoding='UTF-16') as content_file:
+            content = content_file.read()
+            print(content)
+            self.newLogWindow(content)
+
+        os.remove(self.compilelog)
